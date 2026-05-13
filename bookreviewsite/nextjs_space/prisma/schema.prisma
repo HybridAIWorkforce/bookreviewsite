@@ -1,0 +1,303 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/bookreviewsite/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// Users table with citation/points system and admin roles
+model User {
+  id                      String        @id @default(cuid())
+  email                   String        @unique
+  password                String?
+  name                    String?
+  bio                     String?       @db.Text
+  googleId                String?       @unique @map("google_id")
+  isAdmin                 Boolean       @default(false) @map("is_admin")
+  citationBalance         Int           @default(0) @map("star_balance") // Points = Citations
+  reviewerType            ReviewerType  @default(SUPPORTER) @map("reviewer_type")
+  reviewCount             Int           @default(0) @map("review_count")
+  level                   Int           @default(1)
+  streakDays              Int           @default(0) @map("streak_days")
+  lastLoginDate           DateTime?     @map("last_login_date")
+  amazonProfileLink       String?       @map("amazon_profile_link")
+  profileCompleted        Boolean       @default(false) @map("profile_completed")
+  socialMediaBoostClaimed Boolean       @default(false) @map("social_media_boost_claimed")
+  amazonProfileLinked     Boolean       @default(false) @map("amazon_profile_linked")
+  darkMode                Boolean       @default(false) @map("dark_mode")
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  books              Book[]
+  reviews            Review[]
+  subscriptions      Subscription[]
+  accounts           Account[]
+  sessions           Session[]
+  activities         Activity[]
+  badges             Badge[]
+  reviewRequests     ReviewRequest[] @relation("AuthorRequests")
+  receivedRequests   ReviewRequest[] @relation("ReviewerRequests")
+
+  @@map("users")
+}
+
+enum ReviewerType {
+  VERIFIER   // Type 1: Verified Purchase on Amazon (150 base)
+  ADVOCATE   // Type 2: Non-Verified Amazon Review (100 base)
+  INSIDER    // Type 3: Detailed Site Review 300+ words (50 base)
+  SUPPORTER  // Type 4: Standard Site Review 150+ words (25 base)
+}
+
+// NextAuth required tables
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Books table for book submissions
+model Book {
+  id                   String     @id @default(cuid())
+  userId               String     @map("user_id")
+  title                String
+  authorName           String     @map("author_name")
+  genre                String     @default("ROMANCE") // Will be migrated to BookGenre enum
+  description          String     @db.Text
+  coverImageUrl        String?    @map("cover_image_url")
+  bookLink             String?    @map("book_link")
+  status               BookStatus @default(PENDING)
+  citationsRequired    Int        @default(1) @map("stars_required")
+  isDebut              Boolean    @default(false) @map("is_debut")
+  difficultyMultiplier Float      @default(1.0) @map("difficulty_multiplier")
+  createdAt            DateTime   @default(now()) @map("created_at")
+  updatedAt            DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews        Review[]
+  reviewRequests ReviewRequest[]
+
+  @@map("books")
+}
+
+enum BookStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BookGenre {
+  // High Difficulty (2.0x)
+  POETRY
+  LITERARY_FICTION
+  SHORT_STORIES
+  NOVELLAS
+  TRANSLATED_WORKS
+  
+  // Medium-High Difficulty (1.5x)
+  SPECIALIZED_NON_FICTION
+  CHILDREN_PICTURE_BOOKS
+  MIDDLE_GRADE
+  
+  // Medium Difficulty (1.2x)
+  MAINSTREAM_NON_FICTION
+  HISTORICAL_FICTION
+  COZY_MYSTERIES
+  WESTERNS
+  
+  // Low Difficulty (1.0x)
+  ROMANCE
+  FANTASY
+  SCIENCE_FICTION
+  THRILLERS
+  YOUNG_ADULT
+}
+
+// Reviews table for the review exchange system
+model Review {
+  id              String       @id @default(cuid())
+  reviewerId      String       @map("reviewer_id")
+  bookId          String       @map("book_id")
+  rating          Int          @db.SmallInt // 1-5 stars
+  reviewText      String       @db.Text @map("review_text")
+  reviewType      ReviewerType @default(SUPPORTER) @map("review_type")
+  amazonVerified  Boolean      @default(false) @map("amazon_verified")
+  amazonLink      String?      @map("amazon_link")
+  wordCount       Int          @default(0) @map("word_count")
+  citationsEarned Int          @default(1) @map("stars_earned") // Points earned
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  reviewer User @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  book     Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate reviews
+  @@unique([reviewerId, bookId])
+  @@map("reviews")
+}
+
+// Subscriptions table for AI tools with PayPal integration
+model Subscription {
+  id                   String            @id @default(cuid())
+  userId               String            @map("user_id")
+  toolName             String            @map("tool_name")
+  paypalSubscriptionId String?           @map("paypal_subscription_id")
+  status               SubscriptionStatus @default(ACTIVE)
+  monthlyPrice         Decimal           @map("monthly_price") @db.Decimal(10, 2)
+  startDate            DateTime          @map("start_date") @default(now())
+  endDate              DateTime?         @map("end_date")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PENDING
+}
+
+// Activity tracking for daily actions, streaks, shares
+model Activity {
+  id          String       @id @default(cuid())
+  userId      String       @map("user_id")
+  activityType ActivityType @map("activity_type")
+  pointsEarned Int         @map("points_earned")
+  metadata    String?      @db.Text // JSON string for additional data
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("activities")
+}
+
+enum ActivityType {
+  DAILY_LOGIN
+  REVIEW_WRITTEN
+  BOOK_ADDED
+  PROFILE_COMPLETED
+  AMAZON_LINKED
+  SOCIAL_MEDIA_BOOST
+  SHARE_REVIEW
+  LEVEL_UP
+  STREAK_7_DAY
+  STREAK_30_DAY
+  REVIEW_WEEK_STREAK
+}
+
+// Badges earned by users
+model Badge {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  badgeType   BadgeType @map("badge_type")
+  earnedAt    DateTime  @default(now()) @map("earned_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeType])
+  @@map("badges")
+}
+
+enum BadgeType {
+  RELIABLE_READER      // Level 2
+  AMAZON_CRITIC        // Level 3
+  VERIFIED_AUTHORITY   // Level 4
+  REVIEW_LUMINARY      // Level 5
+  AMAZON_VERIFIED      // 5+ Verified Purchase reviews
+  TOP_100_REVIEWER     // Linked Amazon Top 100 profile
+  GENRE_EXPERT         // Consistent reviews in one genre
+  WEEKLY_WARRIOR       // 4-week review streak
+}
+
+// Review requests from authors to reviewers
+model ReviewRequest {
+  id            String              @id @default(cuid())
+  authorId      String              @map("author_id")
+  bookId        String              @map("book_id")
+  reviewerId    String?             @map("reviewer_id")
+  reviewerType  ReviewerType        @map("reviewer_type")
+  pointsCost    Int                 @map("points_cost")
+  status        ReviewRequestStatus @default(PENDING)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  // Relations
+  author   User @relation("AuthorRequests", fields: [authorId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("ReviewerRequests", fields: [reviewerId], references: [id], onDelete: Cascade)
+  book     Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@map("review_requests")
+}
+
+enum ReviewRequestStatus {
+  PENDING
+  ACCEPTED
+  COMPLETED
+  CANCELLED
+}
+
+// Contact form submissions
+model ContactSubmission {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String   @db.Text
+  status    ContactStatus @default(PENDING)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("contact_submissions")
+}
+
+enum ContactStatus {
+  PENDING
+  RESPONDED
+  CLOSED
+}
